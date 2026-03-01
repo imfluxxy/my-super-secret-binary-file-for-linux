@@ -270,15 +270,28 @@ start_daemon() {
 setup_tailscale() {
     info "starting tailscaled..."
 
-    # check if systemd is actually running, use it if so, otherwise nohup it
+    # kill any existing dead tailscaled first
+    pkill -f tailscaled 2>/dev/null || true
+    sleep 1
+
     if pidof systemd >/dev/null 2>&1 || [ "$(cat /proc/1/comm 2>/dev/null)" = "systemd" ]; then
         systemctl enable --now tailscaled 2>/dev/null || true
     else
-        # no systemd, run it raw
         mkdir -p /var/run/tailscale /var/lib/tailscale
-        start_daemon "tailscaled" "tailscaled --state=/var/lib/tailscale/tailscaled.state"
-        sleep 2
+        nohup tailscaled --state=/var/lib/tailscale/tailscaled.state >/tmp/tailscaled.log 2>&1 &
+        echo $! > /tmp/tailscaled.pid
+        info "tailscaled started (pid $!)"
     fi
+
+    # wait until the socket is actually up before calling tailscale up
+    info "waiting for tailscaled socket..."
+    for i in $(seq 1 15); do
+        tailscale status >/dev/null 2>&1 && break
+        sleep 1
+    done
+
+    # if still not up after 15s, something actually broke
+    tailscale status >/dev/null 2>&1 || die "tailscaled didn't come up – check /tmp/tailscaled.log"
 
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
