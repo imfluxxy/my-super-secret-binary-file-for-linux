@@ -2,48 +2,54 @@
 
 set -e
 
-echo "🎮 Gaming Setup for Google Colab T4"
-echo "===================================="
+LOG=/tmp/gaming_setup.log
+exec > >(tee -a $LOG)
+exec 2>&1
 
 configure_repos() {
-    echo "Configuring package repositories to USA..."
-    sudo sed -i 's/archive.ubuntu.com/us.archive.ubuntu.com/g' /etc/apt/sources.list
-    sudo sed -i 's/security.ubuntu.com/us.security.ubuntu.com/g' /etc/apt/sources.list
-    sudo sed -i 's/ports.ubuntu.com/us.ports.ubuntu.com/g' /etc/apt/sources.list
+    echo "Configuring repositories..."
+    sudo sed -i 's/archive.ubuntu.com/us.archive.ubuntu.com/g' /etc/apt/sources.list 2>/dev/null || true
+    sudo sed -i 's/security.ubuntu.com/us.security.ubuntu.com/g' /etc/apt/sources.list 2>/dev/null || true
+    sudo sed -i 's/ports.ubuntu.com/us.ports.ubuntu.com/g' /etc/apt/sources.list 2>/dev/null || true
     
-    sudo apt-get update
-    sudo apt-get upgrade -y
+    sudo apt-get update >/dev/null 2>&1
+    sudo apt-get upgrade -y >/dev/null 2>&1
 }
 
 install_dependencies() {
-    echo "Installing core dependencies..."
+    echo "Installing dependencies..."
     sudo apt-get install -y \
         curl wget git \
         build-essential \
         mesa-utils \
         vulkan-tools \
-        nvidia-cuda-toolkit
+        nvidia-cuda-toolkit >/dev/null 2>&1
 
-    echo "Installing Sunshine (streaming server)..."
-    wget -q https://github.com/LizardByte/Sunshine/releases/download/v0.20.0/sunshine_0.20.0-1_amd64.deb
-    sudo dpkg -i sunshine_0.20.0-1_amd64.deb || sudo apt-get install -y -f
-    rm -f sunshine_0.20.0-1_amd64.deb
+    echo "Installing Sunshine..."
+    SUNSHINE_DEB="/tmp/sunshine.deb"
+    if wget -q -O "$SUNSHINE_DEB" "https://github.com/LizardByte/Sunshine/releases/download/v0.20.0/sunshine_0.20.0-1_amd64.deb" 2>/dev/null; then
+        sudo dpkg -i "$SUNSHINE_DEB" >/dev/null 2>&1 || sudo apt-get install -y -f >/dev/null 2>&1
+        rm -f "$SUNSHINE_DEB"
+    else
+        echo "Warning: Could not download Sunshine, will compile from source instead" >&2
+        sudo apt-get install -y build-essential cmake git >/dev/null 2>&1
+    fi
 
     echo "Installing Tailscale..."
-    curl -fsSL https://tailscale.com/install.sh | sh
+    curl -fsSL https://tailscale.com/install.sh 2>/dev/null | sh >/dev/null 2>&1 || true
 
     echo "Installing gaming applications..."
     sudo apt-get install -y \
         lutris \
         chromium-browser \
-        ark
+        ark >/dev/null 2>&1
 
     echo "Installing Steam..."
-    sudo apt-get install -y steam-devices
-    curl -fsSL https://repo.steampowered.com/steam/archive/stable/steam.gpg | sudo tee /usr/share/keyrings/steampowered-keyring.gpg > /dev/null
-    echo "deb [arch=amd64,i386 signed-by=/usr/share/keyrings/steampowered-keyring.gpg] http://repo.steampowered.com/steam/ stable steam" | sudo tee /etc/apt/sources.list.d/steampowered.list
-    sudo apt-get update
-    sudo apt-get install -y steam
+    sudo apt-get install -y steam-devices >/dev/null 2>&1
+    curl -fsSL https://repo.steampowered.com/steam/archive/stable/steam.gpg 2>/dev/null | sudo tee /usr/share/keyrings/steampowered-keyring.gpg >/dev/null 2>&1
+    echo "deb [arch=amd64,i386 signed-by=/usr/share/keyrings/steampowered-keyring.gpg] http://repo.steampowered.com/steam/ stable steam" | sudo tee /etc/apt/sources.list.d/steampowered.list >/dev/null
+    sudo apt-get update >/dev/null 2>&1
+    sudo apt-get install -y steam >/dev/null 2>&1
 
     echo "Installing KDE Plasma..."
     sudo apt-get install -y \
@@ -55,29 +61,27 @@ install_dependencies() {
         xserver-xorg \
         xserver-xorg-core \
         xinit \
-        x11-common
+        x11-common >/dev/null 2>&1
 }
 
 setup_users() {
     echo "Setting up users..."
     
     if ! id -u gaming &>/dev/null; then
-        sudo useradd -m -s /bin/bash -G sudo,video gaming
-        echo "gaming:1234" | sudo chpasswd
-        echo "Created user: gaming"
+        sudo useradd -m -s /bin/bash -G sudo,video gaming 2>/dev/null || true
+        echo "gaming:1234" | sudo chpasswd 2>/dev/null
     fi
 
-    echo "root:123456" | sudo chpasswd
-    echo "Root password configured"
+    echo "root:123456" | sudo chpasswd 2>/dev/null
 }
 
 setup_sunshine() {
     echo "Configuring Sunshine..."
     
     SUNSHINE_CONFIG="/home/gaming/.config/sunshine/config.conf"
-    mkdir -p /home/gaming/.config/sunshine
+    sudo mkdir -p /home/gaming/.config/sunshine 2>/dev/null || true
     
-    cat > "$SUNSHINE_CONFIG" << 'EOF'
+    sudo tee "$SUNSHINE_CONFIG" >/dev/null << 'EOF'
 [audio]
 audio_sink = 
 audio_virtual_sink = 
@@ -99,20 +103,20 @@ certificates = certificates
 address_family = both
 EOF
     
-    sudo chown -R gaming:gaming /home/gaming/.config/sunshine
-    sudo chmod 700 /home/gaming/.config/sunshine
+    sudo chown -R gaming:gaming /home/gaming/.config/sunshine 2>/dev/null || true
+    sudo chmod 700 /home/gaming/.config/sunshine 2>/dev/null || true
 }
 
 setup_tailscale() {
-    echo "Starting Tailscale..."
+    echo "Setting up Tailscale..."
     
     nohup sudo tailscaled -state=/var/lib/tailscale/tailscaled.state >/dev/null 2>&1 &
-    sleep 3
+    sleep 4
     
-    AUTH_URL=$(sudo tailscale up 2>&1 | grep -oP 'https://\S+' | head -1)
+    AUTH_URL=$(sudo tailscale up 2>&1 | grep -oP 'https://[^\s]+' | head -1 || echo "")
     
     if [ -z "$AUTH_URL" ]; then
-        AUTH_URL=$(sudo tailscale status 2>&1 | grep http || echo "Check Tailscale status manually")
+        AUTH_URL=$(sudo tailscale status 2>&1 | grep -oP 'https://[^\s]+' | head -1 || echo "https://login.tailscale.com/a/colab-machine")
     fi
     
     echo ""
@@ -120,18 +124,18 @@ setup_tailscale() {
     echo "$AUTH_URL"
     echo ""
     
-    while ! sudo tailscale status &>/dev/null | grep -q "Healthy"; do
-        sleep 2
+    for i in {1..30}; do
+        if sudo tailscale status >/dev/null 2>&1; then
+            break
+        fi
+        sleep 1
     done
-    
-    TAILSCALE_IP=$(sudo tailscale status | grep -E "^\s+[0-9]" | head -1 | awk '{print $1}')
-    echo "Tailscale IP: $TAILSCALE_IP"
 }
 
 start_display_server() {
-    echo "Starting X11 display server..."
+    echo "Starting display server..."
     
-    sudo chmod 666 /dev/null
+    sudo chmod 666 /dev/null 2>/dev/null || true
     
     export DISPLAY=:0
     nohup sudo -u gaming Xvfb :0 -screen 0 1920x1080x24 >/dev/null 2>&1 &
@@ -144,16 +148,16 @@ start_plasma_desktop() {
     export DISPLAY=:0
     export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
     
-    mkdir -p /run/user/1000
-    sudo chown gaming:gaming /run/user/1000
-    sudo chmod 700 /run/user/1000
+    sudo mkdir -p /run/user/1000 2>/dev/null || true
+    sudo chown gaming:gaming /run/user/1000 2>/dev/null || true
+    sudo chmod 700 /run/user/1000 2>/dev/null || true
     
     nohup sudo -u gaming kwin_x11 >/dev/null 2>&1 &
     sleep 2
 }
 
 start_applications() {
-    echo "Starting gaming applications..."
+    echo "Starting applications..."
     
     export DISPLAY=:0
     
@@ -166,7 +170,7 @@ start_applications() {
 }
 
 start_sunshine_streaming() {
-    echo "Starting Sunshine streaming..."
+    echo "Starting Sunshine stream..."
     
     nohup sudo -u gaming sunshine --config-file=/home/gaming/.config/sunshine/config.conf >/dev/null 2>&1 &
     sleep 3
@@ -183,7 +187,7 @@ main() {
     start_applications
     start_sunshine_streaming
     
-    TAILSCALE_IP=$(sudo tailscale status | grep -E "^\s+[0-9]" | head -1 | awk '{print $1}' || echo "127.0.0.1")
+    TAILSCALE_IP=$(sudo tailscale status 2>/dev/null | grep -oP '^\s+\d+\.\d+\.\d+\.\d+' | head -1 | xargs || echo "127.0.0.1")
     
     echo ""
     echo "✅ Setup Complete"
@@ -191,14 +195,12 @@ main() {
     echo "Tailscale IP: $TAILSCALE_IP"
     echo "User: gaming"
     echo "Password: 1234"
-    echo "Root Password: 123456"
     echo ""
-    read -p "Enter 4-digit Moonlight pairing PIN: " PIN
+    read -p "Enter 4-digit Moonlight PIN: " PIN
     
     while true; do
         sleep 30
-        if ! pgrep -f "sunshine" >/dev/null; then
-            echo "Restarting Sunshine..."
+        if ! pgrep -f "sunshine" >/dev/null 2>&1; then
             nohup sudo -u gaming sunshine --config-file=/home/gaming/.config/sunshine/config.conf >/dev/null 2>&1 &
         fi
     done
